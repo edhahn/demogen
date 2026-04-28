@@ -8,6 +8,7 @@ export {
 } from "./narrator.js";
 export { recordDemo } from "./recorder.js";
 export { runDemoPipeline } from "./runner.js";
+export { loadEnvFile, loadDemogenEnv } from "./env.js";
 export {
   animateCursorTo,
   injectCursorOverlay,

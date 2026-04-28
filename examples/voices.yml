@@ -1,0 +1,32 @@
+# voices.yml — map friendly voice names (used in your demo YAML's
+# `narration.voice` or per-clip `voice` field) to the service-specific
+# IDs that each TTS provider expects.
+#
+# Lookup is keyed by the active DEMOGEN_TTS_SERVICE. If a friendly name
+# has no entry under the active service, demogen passes the name through
+# verbatim — useful for macOS `say`, which uses voice names directly.
+#
+# Place this file at ./voices.yml in your project (CWD), or point to a
+# specific path via `--voices <path>` or DEMOGEN_VOICES.
+
+# Default voice — used when a demo script omits `narration.voice` and a
+# clip omits `voice`. Must reference a friendly name defined below.
+default: Samantha
+
+elevenlabs:
+  # Friendly name : ElevenLabs voice_id (find these in your ElevenLabs dashboard)
+  Samantha: 21m00Tcm4TlvDq8ikWAM
+  Daniel: onwK4e9ZLuTAKqWW03F9
+  Rachel: 21m00Tcm4TlvDq8ikWAM
+
+openai:
+  # Friendly name : OpenAI built-in voice (alloy|echo|fable|onyx|nova|shimmer)
+  Samantha: nova
+  Daniel: onyx
+  Rachel: shimmer
+
+say:
+  # Optional. macOS `say` already uses these names natively, so entries
+  # here are only needed if you want to remap (e.g. point "Samantha" at
+  # a different installed system voice).
+  Samantha: Samantha

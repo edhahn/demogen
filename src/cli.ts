@@ -5,20 +5,11 @@
  * Usage:
  *   demogen <path-to-yaml> [options]
  *
- * Options:
- *   --skip-narration       reuse existing narration clips
- *   --skip-composition     stop after recording the .webm
- *   --headed               run browser headed (visible)
- *   --base-url <url>       override the recording base URL
- *   --out-dir <path>       override the output directory root
- *   --open                 open the output in the system default player when done
- *
- * Examples:
- *   demogen ./scripts/smoke.demo.yaml
- *   demogen ./scripts/smoke.demo.yaml --headed --base-url http://localhost:5173
+ * Run `demogen --help` for the full flag list.
  */
 
 import { execFileSync } from "node:child_process";
+import { loadDemogenEnv } from "./env.js";
 import { runDemoPipeline } from "./runner.js";
 
 const args = process.argv.slice(2);
@@ -31,17 +22,42 @@ Options:
   --skip-composition     stop after recording the .webm
   --headed               run browser headed (visible)
   --base-url <url>       override the recording base URL
-  --out-dir <path>       override the output directory root
+  --out-dir <path>       base dir for generated content (default: ./demos next to script)
+  --interstitial-dir <p> override interstitial dir (default: <out-dir>/interstitial)
+  --output-dir <path>    override final output dir (default: <out-dir>/output)
+  --voices <path>        path to voices.yml (default: ./voices.yml in cwd)
+  --env <path>           load env vars from this file (default: ./.env.demogen if present)
   --open                 open the output in the system default player when done
+
+Env file:
+  Before reading any DEMOGEN_* / *_API_KEY variables, demogen loads
+  ./.env.demogen (or the path passed to --env) if it exists. Variables
+  already set in the shell environment are preserved (not overridden).
 
 Environment:
   DEMOGEN_BASE_URL          base URL (overrides yaml, overridden by --base-url)
-  DEMOGEN_TTS_SERVICE       "say" (default, macOS) | "elevenlabs"
+  DEMOGEN_OUT_DIR           base dir for generated content
+  DEMOGEN_INTERSTITIAL_DIR  override interstitial dir
+  DEMOGEN_OUTPUT_DIR        override final output dir
+  DEMOGEN_VOICES            path to voices.yml
+  DEMOGEN_TTS_SERVICE       "say" (default, macOS) | "elevenlabs" | "openai"
   ELEVENLABS_API_KEY        required when DEMOGEN_TTS_SERVICE=elevenlabs
-  ELEVENLABS_VOICE_ID       required when DEMOGEN_TTS_SERVICE=elevenlabs
+  ELEVENLABS_VOICE_ID       fallback voice when no voices.yml mapping exists
+  OPENAI_API_KEY            required when DEMOGEN_TTS_SERVICE=openai
+  OPENAI_VOICE              fallback voice (default: nova) — alloy|echo|fable|onyx|nova|shimmer
+  OPENAI_TTS_MODEL          OpenAI model (default: tts-1; use tts-1-hd for higher quality)
 `);
   process.exit(args.length === 0 ? 1 : 0);
 }
+
+const VALUE_FLAGS = [
+  "--base-url",
+  "--out-dir",
+  "--interstitial-dir",
+  "--output-dir",
+  "--voices",
+  "--env",
+];
 
 function flagValue(flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -49,17 +65,17 @@ function flagValue(flag: string): string | undefined {
   return args[i + 1];
 }
 
-const scriptPath = args.find((a) => !a.startsWith("--") && args.indexOf(a) === args.findIndex((x) => x === a) && !isFlagValue(a));
-
 function isFlagValue(arg: string): boolean {
-  // True if this arg is the value following a flag that takes a value.
-  const valueFlags = ["--base-url", "--out-dir"];
-  for (const flag of valueFlags) {
+  for (const flag of VALUE_FLAGS) {
     const i = args.indexOf(flag);
     if (i >= 0 && args[i + 1] === arg) return true;
   }
   return false;
 }
+
+const scriptPath = args.find(
+  (a) => !a.startsWith("--") && args.indexOf(a) === args.findIndex((x) => x === a) && !isFlagValue(a),
+);
 
 if (!scriptPath) {
   console.error("Error: missing path to YAML script");
@@ -67,12 +83,20 @@ if (!scriptPath) {
   process.exit(1);
 }
 
+// Load env file BEFORE constructing opts so DEMOGEN_* vars used as defaults
+// in runner/narrator are visible.
+const loadedEnv = loadDemogenEnv(flagValue("--env"));
+if (loadedEnv) console.log(`[env] loaded ${loadedEnv}`);
+
 const opts = {
   skipNarration: args.includes("--skip-narration"),
   skipComposition: args.includes("--skip-composition"),
   headless: !args.includes("--headed"),
   baseURL: flagValue("--base-url"),
   outDir: flagValue("--out-dir"),
+  interstitialDir: flagValue("--interstitial-dir"),
+  outputDir: flagValue("--output-dir"),
+  voicesPath: flagValue("--voices"),
 };
 
 const openAfter = args.includes("--open");

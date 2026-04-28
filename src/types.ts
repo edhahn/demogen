@@ -14,7 +14,11 @@ const narrationClipSchema = z.object({
 });
 
 const narrationConfigSchema = z.object({
-  voice: z.string().default("Samantha"),
+  /**
+   * Friendly voice name. If omitted, falls back to the `default:` entry in
+   * voices.yml, then to "Samantha". Per-clip `voice` overrides this.
+   */
+  voice: z.string().optional(),
   rate: z.number().positive().default(175),
   clips: z.array(narrationClipSchema).min(1),
 });
@@ -258,11 +262,37 @@ export interface RunOptions {
    */
   baseURL?: string;
   /**
-   * Output directory root. Subdirectories `narration/`, `recordings/`, and
-   * `output/` are created underneath. Defaults to `./demogen-out` relative
-   * to the script file.
+   * Base directory for all generated content. Subdirectories `interstitial/`
+   * (with `narration/` and `recordings/` underneath) and `output/` are
+   * created here. Defaults to `./demos` next to the script file. Per-purpose
+   * overrides take precedence: see `interstitialDir` and `outputDir`.
    */
   outDir?: string;
+  /**
+   * Override for the interstitial directory (narration clips + raw .webm).
+   * Defaults to `<outDir>/interstitial`. Also overridable via the
+   * `DEMOGEN_INTERSTITIAL_DIR` env var.
+   */
+  interstitialDir?: string;
+  /**
+   * Override for the final-output directory. Defaults to `<outDir>/output`.
+   * Also overridable via the `DEMOGEN_OUTPUT_DIR` env var.
+   */
+  outputDir?: string;
+  /**
+   * Path to a voices.yml file mapping friendly voice names (e.g. "Samantha")
+   * to service-specific voice IDs. Defaults to env `DEMOGEN_VOICES`, then
+   * `./voices.yml` in the current working directory.
+   */
+  voicesPath?: string;
+  /**
+   * Path to a `.env` file to load before reading DEMOGEN_* / *_API_KEY
+   * variables. Existing shell env values are preserved (not overridden).
+   * Defaults to `./.env.demogen` in the current working directory if it
+   * exists; pass an explicit path to force a different file (missing file
+   * raises an error in that case).
+   */
+  envPath?: string;
   /** Auth bootstrap callback. Required when the script declares `auth.role`. */
   setupAuth?: SetupAuthFn;
 }

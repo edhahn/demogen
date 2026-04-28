@@ -25,7 +25,7 @@ npx playwright install chromium
 
 - **Node.js 20+**
 - **ffmpeg** with `ffprobe` — `brew install ffmpeg`
-- **macOS** if using the default `say` TTS, OR set `DEMOGEN_TTS_SERVICE=elevenlabs` with `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID`
+- A TTS provider — see [TTS configuration](#tts-configuration) below. Defaults to macOS `say`; switch to ElevenLabs or OpenAI for higher-quality narration.
 
 ## Quick start
 
@@ -43,7 +43,7 @@ npx demogen ./scripts/smoke.demo.yaml --base-url http://localhost:5173
 npx demogen ./scripts/smoke.demo.yaml --skip-narration
 ```
 
-Output is written to `<outDir>/output/<demo-name>.mp4`. By default `<outDir>` is `./demogen-out` next to the YAML file; override with `--out-dir`.
+Output is written to `<outDir>/output/<demo-name>.mp4`. By default `<outDir>` is `./demos` next to the YAML file; override with `--out-dir`. See [Directory layout](#directory-layout) for how to point individual subdirectories elsewhere.
 
 ## CLI flags
 
@@ -53,17 +53,131 @@ Output is written to `<outDir>/output/<demo-name>.mp4`. By default `<outDir>` is
 | `--skip-composition` | Stop after recording the `.webm` (no audio overlay). |
 | `--headed` | Run the browser headed (visible). |
 | `--base-url <url>` | Override the recording base URL. |
-| `--out-dir <path>` | Override the output directory root. |
+| `--out-dir <path>` | Base dir for generated content (default: `./demos` next to script). |
+| `--interstitial-dir <p>` | Override interstitial dir (default: `<out-dir>/interstitial`). |
+| `--output-dir <path>` | Override final output dir (default: `<out-dir>/output`). |
+| `--voices <path>` | Path to `voices.yml` (default: `./voices.yml` in cwd). |
+| `--env <path>` | Path to a `.env` file to load (default: `./.env.demogen` if present). |
 | `--open` | Open the output in the system default player when done. |
+
+## Configuring with `.env.demogen`
+
+At startup, demogen loads `./.env.demogen` (or the file passed to `--env`) and applies its `KEY=value` lines to `process.env` *without* overriding anything already exported in your shell. This keeps API keys and provider config out of your demo YAML and out of your shell rc files.
+
+```bash
+cp .env.demogen.example .env.demogen
+# edit .env.demogen — uncomment and fill in the vars you need
+demogen ./demos/source/smoke.demo.yaml
+```
+
+The example file at [`.env.demogen.example`](.env.demogen.example) documents every supported variable. Any of the env vars in the table below can live in `.env.demogen`. **Do not commit your real `.env.demogen`** — add it to `.gitignore`.
+
+To load a different file: `demogen ./script.yaml --env ./envs/prod.env`. An explicit `--env` path that doesn't exist is an error; the implicit `./.env.demogen` default is silently skipped if absent.
 
 ## Environment variables
 
 | Var | Default | Description |
 |-----|---------|-------------|
 | `DEMOGEN_BASE_URL` | — | Base URL (overridden by `--base-url`). |
-| `DEMOGEN_TTS_SERVICE` | `say` | `say` (macOS) or `elevenlabs`. |
+| `DEMOGEN_OUT_DIR` | `./demos` | Base dir for generated content. |
+| `DEMOGEN_INTERSTITIAL_DIR` | `<out>/interstitial` | Override interstitial dir. |
+| `DEMOGEN_OUTPUT_DIR` | `<out>/output` | Override final output dir. |
+| `DEMOGEN_VOICES` | `./voices.yml` | Path to the voices map file. |
+| `DEMOGEN_TTS_SERVICE` | `say` | `say` (macOS), `elevenlabs`, or `openai`. |
 | `ELEVENLABS_API_KEY` | — | Required when `DEMOGEN_TTS_SERVICE=elevenlabs`. |
-| `ELEVENLABS_VOICE_ID` | — | Required when `DEMOGEN_TTS_SERVICE=elevenlabs`. |
+| `ELEVENLABS_VOICE_ID` | — | Fallback voice when no `voices.yml` mapping exists. |
+| `OPENAI_API_KEY` | — | Required when `DEMOGEN_TTS_SERVICE=openai`. |
+| `OPENAI_VOICE` | `nova` | Fallback voice (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`). |
+| `OPENAI_TTS_MODEL` | `tts-1` | OpenAI TTS model — use `tts-1-hd` for higher fidelity. |
+
+## TTS configuration
+
+demogen supports three TTS providers. Pick one by setting `DEMOGEN_TTS_SERVICE`:
+
+### `say` (macOS, default)
+
+No setup beyond having the `say` binary. Voice names in your YAML (e.g. `Samantha`) map to the macOS system voices — list them with `say -v ?`.
+
+### `elevenlabs`
+
+Add to `.env.demogen` in the directory you run `demogen` from:
+
+```dotenv
+DEMOGEN_TTS_SERVICE=elevenlabs
+ELEVENLABS_API_KEY=sk_...
+# Optional: fallback voice for any clip that doesn't have a voices.yml entry
+ELEVENLABS_VOICE_ID=21m00Tcm4TlvDq8ikWAM
+```
+
+### `openai`
+
+Add to `.env.demogen` in the directory you run `demogen` from:
+
+```dotenv
+DEMOGEN_TTS_SERVICE=openai
+OPENAI_API_KEY=sk-...
+# Optional
+OPENAI_VOICE=nova           # alloy | echo | fable | onyx | nova | shimmer
+OPENAI_TTS_MODEL=tts-1-hd   # default: tts-1
+```
+
+### `voices.yml` — friendly voice names
+
+Keep your demo YAML readable by referring to voices by friendly name (`Samantha`, `Daniel`) and mapping those to provider-specific IDs in a `voices.yml` file. demogen looks for it at `--voices <path>`, then `DEMOGEN_VOICES`, then `./voices.yml` in the current working directory.
+
+```yaml
+# voices.yml
+default: Samantha            # used when a script/clip doesn't specify a voice
+elevenlabs:
+  Samantha: 21m00Tcm4TlvDq8ikWAM   # ElevenLabs voice_id from your dashboard
+  Daniel: onwK4e9ZLuTAKqWW03F9
+openai:
+  Samantha: nova                   # one of alloy|echo|fable|onyx|nova|shimmer
+  Daniel: onyx
+say:
+  # Optional. macOS `say` already uses voice names natively.
+  Samantha: Samantha
+```
+
+In your demo script, reference the friendly name:
+
+```yaml
+narration:
+  voice: Samantha          # resolved via voices.yml for the active service
+  rate: 175
+  clips:
+    - id: welcome
+      text: "Welcome to the demo."
+      voice: Daniel        # per-clip override (also resolved via voices.yml)
+```
+
+If a friendly name has no entry under the active service, demogen passes the name through as-is — useful for `say` and for cases where you want to put a raw provider voice ID directly in the YAML.
+
+Voice resolution order for any clip:
+
+1. Clip-level `voice:` (if set)
+2. Script-level `narration.voice` (if set)
+3. `default:` from `voices.yml`
+4. `"Samantha"` (built-in fallback)
+
+The resolved friendly name is then looked up in the active service's block.
+
+A complete example lives at [`examples/voices.yml`](examples/voices.yml).
+
+## Directory layout
+
+By default demogen writes everything under `./demos/` next to your script:
+
+```
+./demos/
+├── source/                 # your demo .yaml scripts (informational; not enforced)
+├── interstitial/
+│   ├── narration/<demo>/   # .wav/.mp3 clips + .hash cache files
+│   └── recordings/<demo>/  # raw Playwright .webm recording
+└── output/                 # final <demo>.mp4
+```
+
+Override the whole tree with `--out-dir` / `DEMOGEN_OUT_DIR`, or relocate individual subtrees with `--interstitial-dir` / `--output-dir` (or their env equivalents). The `source/` folder is a convention for organizing your scripts — demogen reads from whatever path you pass on the CLI.
 
 ## Writing a demo script
 
@@ -83,8 +197,8 @@ output:
   quality: high             # high | medium
 
 narration:
-  voice: Samantha           # macOS voice name (ignored for elevenlabs)
-  rate: 175                 # words per minute
+  voice: Samantha           # friendly name; resolved via voices.yml per active TTS service
+  rate: 175                 # words per minute (used by `say`; ignored by elevenlabs/openai)                 # words per minute
   clips:
     - id: welcome           # snake_case ID referenced by steps
       text: "Welcome to the dashboard."
@@ -197,10 +311,7 @@ const setupAuth = async ({ role, baseURL, headless }) => {
 4. Compose: ffmpeg mixes audio into video → .mp4
 ```
 
-Intermediate files live under `<outDir>/`:
-- `narration/<demo-name>/` — `.wav`/`.mp3` clips + `.hash` cache files
-- `recordings/<demo-name>/` — raw Playwright `.webm` recording
-- `output/` — final `.mp4`
+See [Directory layout](#directory-layout) for where each pipeline stage writes its output.
 
 ## Cursor overlay
 

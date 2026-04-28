@@ -2,38 +2,49 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadVoiceMap, resolveVoice, type TtsService } from "./voices.js";
 import type { DemoScript, NarrationManifest } from "./types.js";
 
-function getTtsService(): string {
-  return (process.env.DEMOGEN_TTS_SERVICE ?? process.env.DEMO_TTS_SERVICE ?? "say").toLowerCase();
+function getTtsService(): TtsService {
+  const raw = (process.env.DEMOGEN_TTS_SERVICE ?? process.env.DEMO_TTS_SERVICE ?? "say").toLowerCase();
+  if (raw !== "say" && raw !== "elevenlabs" && raw !== "openai") {
+    throw new Error(
+      `Unknown DEMOGEN_TTS_SERVICE "${raw}". Supported: say, elevenlabs, openai.`,
+    );
+  }
+  return raw;
 }
 
 /**
  * Pre-generate TTS audio for all narration clips in a demo script.
  *
- * Uses macOS `say` by default. Set DEMOGEN_TTS_SERVICE=elevenlabs (with
- * ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID) for higher-quality narration.
+ * Service is selected via DEMOGEN_TTS_SERVICE: "say" (macOS, default),
+ * "elevenlabs", or "openai". Friendly voice names (e.g. "Samantha") are
+ * resolved to service-specific voice IDs via voices.yml when present.
  * Caches by content hash — unchanged clips are not regenerated.
  */
 export async function generateNarration(
   script: DemoScript,
   outDir: string,
+  voicesPath?: string,
 ): Promise<NarrationManifest> {
   mkdirSync(outDir, { recursive: true });
 
   const ttsService = getTtsService();
-  const defaultVoice = script.narration.voice;
+  const voiceMap = loadVoiceMap(voicesPath);
+  const defaultVoice = script.narration.voice ?? voiceMap.default ?? "Samantha";
   const defaultRate = script.narration.rate;
   const manifest: NarrationManifest = new Map();
 
   for (const clip of script.narration.clips) {
-    const voice = clip.voice ?? defaultVoice;
+    const friendlyVoice = clip.voice ?? defaultVoice;
+    const resolvedVoice = resolveVoice(voiceMap, ttsService, friendlyVoice);
     const rate = clip.rate ?? defaultRate;
-    const ext = ttsService === "elevenlabs" ? "mp3" : "wav";
+    const ext = ttsService === "say" ? "wav" : "mp3";
     const audioPath = join(outDir, `${clip.id}.${ext}`);
     const hashPath = join(outDir, `${clip.id}.hash`);
 
-    const contentHash = computeHash(`${ttsService}|${clip.text}|${voice}|${rate}`);
+    const contentHash = computeHash(`${ttsService}|${clip.text}|${resolvedVoice}|${rate}`);
 
     if (existsSync(audioPath) && existsSync(hashPath)) {
       const existingHash = readFileSync(hashPath, "utf-8").trim();
@@ -46,9 +57,11 @@ export async function generateNarration(
     }
 
     if (ttsService === "elevenlabs") {
-      await generateClipElevenLabs(clip.text, clip.voice, audioPath);
+      await generateClipElevenLabs(clip.text, resolvedVoice, audioPath);
+    } else if (ttsService === "openai") {
+      await generateClipOpenAI(clip.text, resolvedVoice, audioPath);
     } else {
-      generateClipSay(clip.text, voice, rate, audioPath);
+      generateClipSay(clip.text, resolvedVoice, rate, audioPath);
     }
     writeFileSync(hashPath, contentHash, "utf-8");
 
@@ -70,16 +83,20 @@ function generateClipSay(text: string, voice: string, rate: number, outputPath: 
 
 async function generateClipElevenLabs(
   text: string,
-  voiceOverride: string | undefined,
+  voiceId: string | undefined,
   outputPath: string,
 ): Promise<void> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
-  const voiceId = voiceOverride ?? process.env.ELEVENLABS_VOICE_ID;
+  const resolvedVoiceId = voiceId ?? process.env.ELEVENLABS_VOICE_ID;
 
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY is not set");
-  if (!voiceId) throw new Error("ELEVENLABS_VOICE_ID is not set (and no per-clip voice override)");
+  if (!resolvedVoiceId) {
+    throw new Error(
+      "No ElevenLabs voice ID. Map the voice name in voices.yml or set ELEVENLABS_VOICE_ID.",
+    );
+  }
 
-  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${resolvedVoiceId}`, {
     method: "POST",
     headers: {
       "xi-api-key": apiKey,
@@ -102,6 +119,41 @@ async function generateClipElevenLabs(
   writeFileSync(outputPath, buffer);
 }
 
+async function generateClipOpenAI(
+  text: string,
+  voice: string | undefined,
+  outputPath: string,
+): Promise<void> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const resolvedVoice = voice ?? process.env.OPENAI_VOICE ?? "nova";
+  const model = process.env.OPENAI_TTS_MODEL ?? "tts-1";
+
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "audio/mpeg",
+    },
+    body: JSON.stringify({
+      model,
+      input: text,
+      voice: resolvedVoice,
+      response_format: "mp3",
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "(unreadable)");
+    throw new Error(`OpenAI TTS API error ${response.status}: ${body}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  writeFileSync(outputPath, buffer);
+}
+
 function probeAudioDuration(audioPath: string): number {
   const result = execFileSync(
     "ffprobe",
@@ -116,15 +168,17 @@ function computeHash(input: string): string {
 }
 
 export function checkNarratorPrerequisites(): void {
-  if (getTtsService() === "elevenlabs") {
+  const service = getTtsService();
+  if (service === "elevenlabs") {
     if (!process.env.ELEVENLABS_API_KEY) {
       throw new Error(
         "ELEVENLABS_API_KEY is not set (required when DEMOGEN_TTS_SERVICE=elevenlabs)",
       );
     }
-    if (!process.env.ELEVENLABS_VOICE_ID) {
+  } else if (service === "openai") {
+    if (!process.env.OPENAI_API_KEY) {
       throw new Error(
-        "ELEVENLABS_VOICE_ID is not set (required when DEMOGEN_TTS_SERVICE=elevenlabs)",
+        "OPENAI_API_KEY is not set (required when DEMOGEN_TTS_SERVICE=openai)",
       );
     }
   } else {
@@ -132,7 +186,7 @@ export function checkNarratorPrerequisites(): void {
       execFileSync("which", ["say"], { stdio: "pipe" });
     } catch {
       throw new Error(
-        "macOS `say` command not found. Default TTS requires macOS, or set DEMOGEN_TTS_SERVICE=elevenlabs.",
+        "macOS `say` command not found. Default TTS requires macOS, or set DEMOGEN_TTS_SERVICE to elevenlabs or openai.",
       );
     }
   }
