@@ -1,0 +1,45 @@
+meta:
+  name: smoke
+  description: "Minimal example demo — visits a public page and narrates."
+
+base_url: https://example.com
+
+output:
+  resolution:
+    width: 1280
+    height: 720
+  quality: high
+
+narration:
+  voice: Samantha
+  rate: 175
+  clips:
+    - id: welcome
+      text: "Welcome to our example demo."
+    - id: closing
+      text: "That concludes the smoke test."
+
+scenes:
+  - id: intro
+    steps:
+      - action: narrate
+        clip: welcome
+
+      - action: goto
+        value: /
+        wait_for_narration: welcome
+        wait_after: 1500
+
+      - action: scroll
+        value: down
+        wait_after: 1000
+
+  - id: outro
+    steps:
+      - action: narrate
+        clip: closing
+
+      - action: wait
+        condition: timeout
+        timeout: 2000
+        wait_for_narration: closing

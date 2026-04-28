@@ -1,0 +1,278 @@
+import { readFileSync } from "node:fs";
+import yaml from "js-yaml";
+import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// Zod schemas
+// ---------------------------------------------------------------------------
+
+const narrationClipSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9_]*$/, "Clip IDs must be snake_case"),
+  text: z.string().min(1),
+  voice: z.string().optional(),
+  rate: z.number().positive().optional(),
+});
+
+const narrationConfigSchema = z.object({
+  voice: z.string().default("Samantha"),
+  rate: z.number().positive().default(175),
+  clips: z.array(narrationClipSchema).min(1),
+});
+
+const baseStepFields = z.object({
+  wait_after: z.number().nonnegative().optional(),
+  wait_for_narration: z.string().optional(),
+  description: z.string().optional(),
+});
+
+const narrateStepSchema = baseStepFields.extend({
+  action: z.literal("narrate"),
+  clip: z.string(),
+});
+
+const gotoStepSchema = baseStepFields.extend({
+  action: z.literal("goto"),
+  value: z.string(),
+});
+
+const clickStepSchema = baseStepFields.extend({
+  action: z.literal("click"),
+  selector: z.string(),
+});
+
+const fillStepSchema = baseStepFields.extend({
+  action: z.literal("fill"),
+  selector: z.string(),
+  value: z.string(),
+});
+
+const pressStepSchema = baseStepFields.extend({
+  action: z.literal("press"),
+  value: z.string(),
+});
+
+const hoverStepSchema = baseStepFields.extend({
+  action: z.literal("hover"),
+  selector: z.string(),
+});
+
+const scrollStepSchema = baseStepFields.extend({
+  action: z.literal("scroll"),
+  value: z.string(),
+});
+
+const waitStepSchema = baseStepFields.extend({
+  action: z.literal("wait"),
+  condition: z.enum(["selector", "timeout", "networkidle"]),
+  selector: z.string().optional(),
+  timeout: z.number().positive().optional(),
+});
+
+const demoStepSchema = z.discriminatedUnion("action", [
+  narrateStepSchema,
+  gotoStepSchema,
+  clickStepSchema,
+  fillStepSchema,
+  pressStepSchema,
+  hoverStepSchema,
+  scrollStepSchema,
+  waitStepSchema,
+]);
+
+const demoSceneSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9_]*$/, "Scene IDs must be snake_case"),
+  title: z.string().optional(),
+  transition: z.enum(["fade", "cut", "none"]).default("cut"),
+  transition_duration: z.number().nonnegative().default(500),
+  steps: z.array(demoStepSchema).min(1),
+});
+
+const outputSettingsSchema = z.object({
+  resolution: z
+    .object({
+      width: z.number().positive().default(1280),
+      height: z.number().positive().default(720),
+    })
+    .default({ width: 1280, height: 720 }),
+  fps: z.number().positive().default(30),
+  quality: z.enum(["high", "medium"]).default("high"),
+  format: z.literal("mp4").default("mp4"),
+});
+
+const cursorConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    travelMs: z.number().positive().default(500),
+    steps: z.number().int().positive().default(15),
+    showClickRipple: z.boolean().default(true),
+  })
+  .default({});
+
+const demoMetaSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9-]*$/, "Demo names must be kebab-case"),
+  description: z.string(),
+  feature: z.string().optional(),
+  author: z.string().optional(),
+  created: z.string().optional(),
+});
+
+const demoAuthSchema = z
+  .object({
+    /**
+     * Free-form role identifier. The recording pipeline does NOT interpret
+     * this value — it is forwarded to the user-supplied `setupAuth` callback
+     * (see RunOptions) which is responsible for producing a Playwright
+     * storageState file pre-authenticated for this role.
+     */
+    role: z.string().optional(),
+  })
+  .optional();
+
+const baseUrlSchema = z.string().url().optional();
+
+export const demoScriptSchema = z
+  .object({
+    meta: demoMetaSchema,
+    auth: demoAuthSchema,
+    /**
+     * Base URL the recorder navigates against. Overridden by RunOptions.baseURL
+     * or the DEMOGEN_BASE_URL environment variable.
+     */
+    base_url: baseUrlSchema,
+    output: outputSettingsSchema.default({}),
+    cursor: cursorConfigSchema,
+    narration: narrationConfigSchema,
+    scenes: z.array(demoSceneSchema).min(1),
+  })
+  .superRefine((script, ctx) => {
+    const clipIds = new Set(script.narration.clips.map((c) => c.id));
+
+    for (const scene of script.scenes) {
+      for (const step of scene.steps) {
+        if (step.action === "narrate" && !clipIds.has(step.clip)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Scene "${scene.id}" references unknown narration clip "${step.clip}"`,
+            path: ["scenes"],
+          });
+        }
+        if (step.wait_for_narration && !clipIds.has(step.wait_for_narration)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Scene "${scene.id}" wait_for_narration references unknown clip "${step.wait_for_narration}"`,
+            path: ["scenes"],
+          });
+        }
+        if (step.action === "wait") {
+          if (step.condition === "selector" && !step.selector) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Scene "${scene.id}" wait step with condition "selector" requires a selector field`,
+              path: ["scenes"],
+            });
+          }
+          if (step.condition === "timeout" && step.timeout == null) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Scene "${scene.id}" wait step with condition "timeout" requires a timeout field`,
+              path: ["scenes"],
+            });
+          }
+        }
+      }
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// Inferred types
+// ---------------------------------------------------------------------------
+
+export type DemoScript = z.infer<typeof demoScriptSchema>;
+export type DemoScene = z.infer<typeof demoSceneSchema>;
+export type DemoStep = z.infer<typeof demoStepSchema>;
+export type NarrationClip = z.infer<typeof narrationClipSchema>;
+export type OutputSettings = z.infer<typeof outputSettingsSchema>;
+export type CursorConfig = z.infer<typeof cursorConfigSchema>;
+export type DemoMeta = z.infer<typeof demoMetaSchema>;
+
+// ---------------------------------------------------------------------------
+// Runtime types (not in YAML — produced by pipeline stages)
+// ---------------------------------------------------------------------------
+
+export interface NarrationManifestEntry {
+  audioPath: string;
+  durationMs: number;
+}
+
+export type NarrationManifest = Map<string, NarrationManifestEntry>;
+
+export interface NarrationTimelineEntry {
+  videoOffsetMs: number;
+}
+
+export type NarrationTimeline = Map<string, NarrationTimelineEntry>;
+
+export interface RecordingResult {
+  videoPath: string;
+  narrationTimeline: NarrationTimeline;
+  totalDurationMs: number;
+}
+
+export interface ComposeOptions {
+  videoPath: string;
+  manifest: NarrationManifest;
+  timeline: NarrationTimeline;
+  output: OutputSettings;
+  outputPath: string;
+}
+
+export interface PipelineResult {
+  outputPath: string;
+  durationMs: number;
+  clipCount: number;
+  sceneCount: number;
+}
+
+/**
+ * Callback that produces a Playwright storageState file for a given auth
+ * role. Called by the recorder before the recording context is created so
+ * the demo starts already authenticated. Return the absolute path to a
+ * storageState JSON file (e.g., one written via context.storageState({path})).
+ *
+ * If your demo doesn't need auth, omit `auth.role` from the script and skip
+ * this callback entirely.
+ */
+export type SetupAuthFn = (params: {
+  role: string;
+  baseURL: string;
+  headless: boolean;
+}) => Promise<string>;
+
+export interface RunOptions {
+  skipNarration?: boolean;
+  skipComposition?: boolean;
+  headless?: boolean;
+  /**
+   * Base URL passed to Playwright. Overrides `base_url` from the YAML script
+   * and the `DEMOGEN_BASE_URL` env var.
+   */
+  baseURL?: string;
+  /**
+   * Output directory root. Subdirectories `narration/`, `recordings/`, and
+   * `output/` are created underneath. Defaults to `./demogen-out` relative
+   * to the script file.
+   */
+  outDir?: string;
+  /** Auth bootstrap callback. Required when the script declares `auth.role`. */
+  setupAuth?: SetupAuthFn;
+}
+
+// ---------------------------------------------------------------------------
+// Parse helper
+// ---------------------------------------------------------------------------
+
+export function parseDemoScript(yamlPath: string): DemoScript {
+  const raw = readFileSync(yamlPath, "utf-8");
+  const parsed = yaml.load(raw);
+  return demoScriptSchema.parse(parsed);
+}

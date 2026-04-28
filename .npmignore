@@ -1,0 +1,11 @@
+src/
+examples/
+node_modules/
+*.test.ts
+__tests__/
+tsconfig.json
+.gitignore
+demogen-out/
+narration/
+recordings/
+output/

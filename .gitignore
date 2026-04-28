@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.env.local
+
+# Demo recording artifacts
+demogen-out/
+narration/
+recordings/
+output/
+*.webm
+*.mp4
+*.wav
+*.mp3
+*.hash
