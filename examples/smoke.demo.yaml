@@ -21,6 +21,7 @@ music:
   fade_out_ms: 2000
 
 narration:
+  voice: Samantha
   rate: 175
   clips:
     - id: title_vo
@@ -40,8 +41,10 @@ scenes:
     subtitle: "A 30-second smoke test"
     clip: title_vo
     duration_ms: 4000
+    fade: false            # the crossfade below owns this boundary
 
   - id: intro
+    transition: crossfade  # dissolve from the title card into the browser
     steps:
       - action: narrate
         clip: welcome
@@ -56,6 +59,7 @@ scenes:
         wait_after: 1000
 
   - id: outro
+    transition: wipe       # wipe from the intro scene to the outro
     steps:
       - action: narrate
         clip: closing
@@ -68,6 +72,8 @@ scenes:
   - type: card
     id: credits
     kind: credits
+    transition: fade_black   # fade through black into the credits
+    fade: false
     headline: "Thanks for watching"
     lines:
       - "Built with demogen"

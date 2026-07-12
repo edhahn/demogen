@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import yaml from "js-yaml";
 import { z } from "zod";
 import { transitionNames } from "./transitions.js";
-import { transitionNames } from "./transitions.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas
