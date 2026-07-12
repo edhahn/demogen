@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import yaml from "js-yaml";
 import { z } from "zod";
+import { transitionNames } from "./transitions.js";
+import { transitionNames } from "./transitions.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas
@@ -91,8 +93,19 @@ const browserSceneSchema = z.object({
   type: z.literal("browser").optional(),
   id: z.string().regex(/^[a-z][a-z0-9_]*$/, "Scene IDs must be snake_case"),
   title: z.string().optional(),
-  transition: z.enum(["fade", "cut", "none"]).default("cut"),
-  transition_duration: z.number().nonnegative().default(500),
+  /**
+   * How this scene is joined to the segment before it. See the transition
+   * registry (transitions.ts) for the full list. Defaults to a hard `cut`,
+   * which preserves the fast stream-copy concat path. Blended transitions
+   * (crossfade, fade_black, fade_white, wipe, …) are rendered with ffmpeg's
+   * xfade filter at compose time.
+   */
+  transition: z.enum(transitionNames).default("cut"),
+  /**
+   * Blend duration in ms. When omitted, the transition's registered default is
+   * used. Ignored for `cut`/`none`.
+   */
+  transition_duration: z.number().nonnegative().optional(),
   steps: z.array(demoStepSchema).min(1),
 });
 
@@ -119,8 +132,17 @@ const cardSceneSchema = z.object({
   duration_ms: z.number().positive().default(4000),
   /** Optional narration clip id (from the shared narration pool) to voice over the card. */
   clip: z.string().optional(),
-  /** Fade the card in from / out to black. */
+  /**
+   * Fade the card in from / out to black within its own segment. Independent of
+   * `transition` (which blends the card with adjacent segments at concat time).
+   * When you set a blended `transition` into or out of a card, set `fade: false`
+   * on that card to avoid stacking two fades at the same boundary.
+   */
   fade: z.boolean().default(true),
+  /** How this card is joined to the segment before it. See transitions.ts. */
+  transition: z.enum(transitionNames).default("cut"),
+  /** Blend duration in ms; falls back to the transition's registered default. */
+  transition_duration: z.number().nonnegative().optional(),
 });
 
 /**
@@ -280,10 +302,23 @@ export interface NarrationTimelineEntry {
 
 export type NarrationTimeline = Map<string, NarrationTimelineEntry>;
 
+/** Where a browser scene begins within the continuous run recording. */
+export interface SceneBoundary {
+  sceneId: string;
+  /** Offset (ms) from the start of this run's recording where the scene begins. */
+  startMs: number;
+}
+
 export interface RecordingResult {
   videoPath: string;
   narrationTimeline: NarrationTimeline;
   totalDurationMs: number;
+  /**
+   * Per-scene start offsets within the run recording, in scene order. Lets the
+   * runner split one continuous recording into per-scene segments so scene-level
+   * transitions can be applied without breaking session/navigation continuity.
+   */
+  sceneBoundaries: SceneBoundary[];
 }
 
 export interface ComposeOptions {

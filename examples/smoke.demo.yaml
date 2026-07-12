@@ -21,7 +21,6 @@ music:
   fade_out_ms: 2000
 
 narration:
-  voice: Samantha
   rate: 175
   clips:
     - id: title_vo

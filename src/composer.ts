@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isHardCut, resolveTransition, transitionDurationMs } from "./transitions.js";
 import type { ComposeOptions, MusicConfig, OutputSettings } from "./types.js";
 
 const CRF_HIGH = 18;
@@ -232,6 +233,207 @@ export function concatSegments(
     ],
     "concat (filter re-encode)",
   );
+  return outputPath;
+}
+
+/**
+ * Extract a time range from a composed segment into its own normalized mp4.
+ * Used to split one continuous browser run (recorded as a single video to keep
+ * the session/navigation continuous) into per-scene segments so scene-level
+ * transitions can be applied between them. Re-encodes with {@link segmentOutputArgs}
+ * so the pieces concatenate/xfade cleanly with everything else.
+ */
+export function extractSegment(
+  inputPath: string,
+  startSec: number,
+  endSec: number | undefined,
+  outputPath: string,
+  output: OutputSettings,
+): string {
+  mkdirSync(dirname(outputPath), { recursive: true });
+  const args = ["-i", inputPath, "-ss", startSec.toFixed(3)];
+  if (endSec != null) args.push("-to", endSec.toFixed(3));
+  args.push(...segmentOutputArgs(output.quality, output.fps), "-y", outputPath);
+  runFfmpeg(args, "segment extract");
+  return outputPath;
+}
+
+/**
+ * One item in a transition-aware concat: a composed segment plus the transition
+ * that joins it to the segment before it. The first item's transition is ignored
+ * (nothing precedes it).
+ */
+export interface TransitionItem {
+  path: string;
+  /** Transition name (registry key) joining this item to the previous one. */
+  transition: string;
+  /** Explicit blend duration (ms); falls back to the transition's default. */
+  transitionDurationMs?: number;
+}
+
+/** A run of items joined only by hard cuts, plus the transition into the run. */
+interface Cluster {
+  paths: string[];
+  /** Transition joining this cluster to the previous cluster. */
+  transition: string;
+  transitionDurationMs?: number;
+}
+
+/**
+ * Group items into clusters separated by blended transitions. Consecutive items
+ * joined by a hard cut (or a zero-duration transition) collapse into one cluster
+ * that will be plain-concatenated; each blended transition starts a new cluster
+ * whose boundary is rendered with xfade. Pure — unit tested.
+ */
+export function clusterByCuts(items: TransitionItem[]): Cluster[] {
+  const clusters: Cluster[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i] as TransitionItem;
+    const cutBoundary =
+      isHardCut(it.transition) || transitionDurationMs(it.transition, it.transitionDurationMs) <= 0;
+    if (i > 0 && cutBoundary) {
+      (clusters[clusters.length - 1] as Cluster).paths.push(it.path);
+    } else {
+      clusters.push({
+        paths: [it.path],
+        transition: it.transition,
+        transitionDurationMs: it.transitionDurationMs,
+      });
+    }
+  }
+  return clusters;
+}
+
+/**
+ * Probe a media file's duration in milliseconds via ffprobe.
+ */
+export function probeMediaDurationMs(path: string): number {
+  const out = execFileSync(
+    "ffprobe",
+    ["-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+    { encoding: "utf-8" },
+  ).trim();
+  return Math.round(parseFloat(out) * 1000);
+}
+
+/**
+ * Build the ffmpeg `-filter_complex` for an xfade/acrossfade chain across
+ * clusters. Input N (`[N:v]`/`[N:a]`) is cluster N. Each blended boundary
+ * overlaps the streams by its (clamped) duration, so both the video (xfade) and
+ * audio (acrossfade) chains shrink by the same amount and stay in sync. The
+ * first cluster's transition is ignored. Pure — unit tested.
+ */
+export function planXfadeChain(
+  clusters: Array<{ durationSec: number; transition: string; durationOverrideSec?: number }>,
+): { filterComplex: string; vOut: string; aOut: string } {
+  if (clusters.length < 2) {
+    throw new Error("planXfadeChain requires at least 2 clusters");
+  }
+  const parts: string[] = [];
+  let vPrev = "[0:v]";
+  let aPrev = "[0:a]";
+  let running = (clusters[0] as { durationSec: number }).durationSec;
+
+  for (let i = 1; i < clusters.length; i++) {
+    const c = clusters[i] as { durationSec: number; transition: string; durationOverrideSec?: number };
+    const def = resolveTransition(c.transition);
+    const xid = def.xfade;
+    if (!xid) throw new Error(`planXfadeChain: cluster ${i} has a hard-cut transition "${c.transition}"`);
+
+    const wanted = c.durationOverrideSec ?? def.defaultDurationMs / 1000;
+    // Clamp so the overlap fits inside both the accumulated left stream and the
+    // incoming cluster, leaving a small margin.
+    const maxD = Math.max(0.05, Math.min(running, c.durationSec) - 0.05);
+    const d = Math.min(wanted, maxD);
+    const offset = Math.max(0, running - d);
+
+    const last = i === clusters.length - 1;
+    const vLabel = last ? "[vout]" : `[vx${i}]`;
+    const aLabel = last ? "[aout]" : `[ax${i}]`;
+    parts.push(
+      `${vPrev}[${i}:v]xfade=transition=${xid}:duration=${d.toFixed(3)}:offset=${offset.toFixed(3)}${vLabel}`,
+    );
+    parts.push(`${aPrev}[${i}:a]acrossfade=d=${d.toFixed(3)}${aLabel}`);
+
+    vPrev = vLabel;
+    aPrev = aLabel;
+    running = running + c.durationSec - d;
+  }
+
+  return { filterComplex: parts.join(";"), vOut: "[vout]", aOut: "[aout]" };
+}
+
+/**
+ * Concatenate composed segments, applying blended scene transitions (xfade)
+ * where requested and hard cuts everywhere else. When every join is a hard cut
+ * this delegates to {@link concatSegments} (fast stream-copy). Otherwise it
+ * collapses hard-cut runs, probes durations, and renders one xfade/acrossfade
+ * chain over the collapsed clusters.
+ */
+export function concatWithTransitions(
+  items: TransitionItem[],
+  outputPath: string,
+  output: OutputSettings,
+): string {
+  mkdirSync(dirname(outputPath), { recursive: true });
+
+  if (items.length === 0) {
+    throw new Error("concatWithTransitions: no segments to concatenate");
+  }
+  if (items.length === 1) {
+    return concatSegments([(items[0] as TransitionItem).path], outputPath, output);
+  }
+
+  const clusters = clusterByCuts(items);
+  if (clusters.length === 1) {
+    // No blended transitions — plain concat over all segments.
+    return concatSegments(
+      items.map((i) => i.path),
+      outputPath,
+      output,
+    );
+  }
+
+  // Collapse each hard-cut cluster into a single normalized mp4 so the xfade
+  // chain operates on one input per cluster.
+  const clusterPaths = clusters.map((c, idx) => {
+    if (c.paths.length === 1) return c.paths[0] as string;
+    const merged = join(dirname(outputPath), `xfade-cluster-${idx}.mp4`);
+    concatSegments(c.paths, merged, output);
+    return merged;
+  });
+
+  const planClusters = clusters.map((c, idx) => ({
+    durationSec: probeMediaDurationMs(clusterPaths[idx] as string) / 1000,
+    transition: c.transition,
+    durationOverrideSec:
+      c.transitionDurationMs != null ? c.transitionDurationMs / 1000 : undefined,
+  }));
+
+  const { filterComplex, vOut, aOut } = planXfadeChain(planClusters);
+
+  const inputArgs: string[] = [];
+  for (const p of clusterPaths) inputArgs.push("-i", p);
+
+  const args = [
+    ...inputArgs,
+    "-filter_complex",
+    filterComplex,
+    "-map",
+    vOut,
+    "-map",
+    aOut,
+    ...segmentOutputArgs(output.quality, output.fps),
+    "-y",
+    outputPath,
+  ];
+
+  console.log(
+    `  [composer] xfade concat: ${clusters.length} clusters, ${
+      clusters.length - 1
+    } blended transition(s)`,
+  );
+  runFfmpeg(args, "xfade concat");
   return outputPath;
 }
 

@@ -15,9 +15,9 @@ default: Samantha
 
 elevenlabs:
   # Friendly name : ElevenLabs voice_id (find these in your ElevenLabs dashboard)
-  Samantha: 21m00Tcm4TlvDq8ikWAM
-  Daniel: onwK4e9ZLuTAKqWW03F9
-  Rachel: 21m00Tcm4TlvDq8ikWAM
+  Samantha: c1uwEpPUcC16tq1udqxk
+  Daniel: KeU8nqWFDbaoi0QVUjD3
+  Rachel: WZlYpi1yf6zJhNWXih74
 
 openai:
   # Friendly name : OpenAI built-in voice (alloy|echo|fable|onyx|nova|shimmer)

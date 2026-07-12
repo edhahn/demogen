@@ -13,6 +13,7 @@ import type {
   NarrationManifest,
   NarrationTimeline,
   RecordingResult,
+  SceneBoundary,
   SetupAuthFn,
 } from "./types.js";
 
@@ -85,6 +86,7 @@ export async function recordDemo(
 
   const page = await context.newPage();
   const timeline: NarrationTimeline = new Map();
+  const sceneBoundaries: SceneBoundary[] = [];
 
   const clipStartTimes = new Map<string, number>();
   const recordingStartMs = Date.now();
@@ -111,7 +113,10 @@ export async function recordDemo(
     };
 
     for (const scene of scenes) {
-      console.log(`  [recorder] scene: ${scene.id}`);
+      // Record where this scene begins within the run so the runner can split
+      // the single recording into per-scene segments for scene transitions.
+      sceneBoundaries.push({ sceneId: scene.id, startMs: elapsed() });
+      console.log(`  [recorder] scene: ${scene.id} (starts at ${elapsed()}ms)`);
 
       for (const step of scene.steps) {
         if (step.wait_for_narration) {
@@ -152,7 +157,7 @@ export async function recordDemo(
 
     const videoPath = await findRecordedVideo(outDir);
 
-    return { videoPath, narrationTimeline: timeline, totalDurationMs };
+    return { videoPath, narrationTimeline: timeline, totalDurationMs, sceneBoundaries };
   } catch (error) {
     await context.close();
     await browser.close();

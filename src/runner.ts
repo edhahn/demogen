@@ -8,9 +8,13 @@ import {
 import {
   checkComposerPrerequisites,
   composeDemoVideo,
-  concatSegments,
+  concatWithTransitions,
+  extractSegment,
   mixBackgroundMusic,
+  probeMediaDurationMs,
+  type TransitionItem,
 } from "./composer.js";
+import { isHardCut, transitionDurationMs } from "./transitions.js";
 import { loadDemogenEnv } from "./env.js";
 import { checkNarratorPrerequisites, generateNarration } from "./narrator.js";
 import { recordDemo } from "./recorder.js";
@@ -145,7 +149,10 @@ export async function runDemoPipeline(
     `[pipeline] phase 2: building ${segments.length} segments (baseURL=${baseURL})...`,
   );
 
-  const segmentPaths: string[] = [];
+  // Ordered concat items: each composed segment plus the transition that joins
+  // it to the item before it. A browser run may split into several items when
+  // its scenes request blended transitions (see below).
+  const items: TransitionItem[] = [];
   let totalDurationMs = 0;
   let firstRecordingPath: string | undefined;
 
@@ -154,8 +161,10 @@ export async function runDemoPipeline(
     const segmentPath = join(recordingsDir, `seg-${pad(i)}.mp4`);
 
     if (segment.kind === "browser") {
-      console.log(`[pipeline]   segment ${i}: browser (${segment.scenes.length} scenes)`);
-      const recording = await recordDemo(script, segment.scenes, manifest, recordingsDir, {
+      const runScenes = segment.scenes;
+      const firstScene = runScenes[0] as BrowserScene;
+      console.log(`[pipeline]   segment ${i}: browser (${runScenes.length} scenes)`);
+      const recording = await recordDemo(script, runScenes, manifest, recordingsDir, {
         headless,
         baseURL,
         setupAuth,
@@ -165,6 +174,8 @@ export async function runDemoPipeline(
 
       if (skipComposition) continue;
 
+      // Compose the whole run (narration overlaid) into one mp4, preserving the
+      // continuous browsing session.
       await composeDemoVideo({
         videoPath: recording.videoPath,
         manifest,
@@ -172,7 +183,43 @@ export async function runDemoPipeline(
         output: script.output,
         outputPath: segmentPath,
       });
-      segmentPaths.push(segmentPath);
+
+      // Split the run at each internal scene that asks for a blended transition,
+      // so that scene becomes its own concat item. Scenes joined by hard cuts
+      // stay merged in the same item (no re-render needed).
+      const splitIdx = runScenes
+        .map((s, idx) => ({ s, idx }))
+        .filter(
+          ({ s, idx }) =>
+            idx > 0 &&
+            !isHardCut(s.transition) &&
+            transitionDurationMs(s.transition, s.transition_duration) > 0,
+        );
+
+      if (splitIdx.length === 0) {
+        items.push({
+          path: segmentPath,
+          transition: firstScene.transition,
+          transitionDurationMs: firstScene.transition_duration,
+        });
+      } else {
+        const pieceScenes = [firstScene, ...splitIdx.map(({ s }) => s)];
+        const startMsList = [0, ...splitIdx.map(({ idx }) => recording.sceneBoundaries[idx]?.startMs ?? 0)];
+        for (let p = 0; p < startMsList.length; p++) {
+          const startSec = (startMsList[p] as number) / 1000;
+          const nextMs = startMsList[p + 1];
+          const endSec = nextMs != null ? nextMs / 1000 : undefined;
+          const piecePath = join(recordingsDir, `seg-${pad(i)}-${pad(p)}.mp4`);
+          extractSegment(segmentPath, startSec, endSec, piecePath, script.output);
+          const sc = pieceScenes[p] as BrowserScene;
+          items.push({
+            path: piecePath,
+            transition: sc.transition,
+            transitionDurationMs: sc.transition_duration,
+          });
+        }
+        console.log(`[pipeline]     split browser run into ${startMsList.length} transition pieces`);
+      }
     } else {
       const { card } = segment;
       const narration = card.clip ? manifest.get(card.clip) : undefined;
@@ -193,7 +240,11 @@ export async function runDemoPipeline(
         fps: script.output.fps,
         outputPath: segmentPath,
       });
-      segmentPaths.push(segmentPath);
+      items.push({
+        path: segmentPath,
+        transition: card.transition,
+        transitionDurationMs: card.transition_duration,
+      });
     }
   }
 
@@ -208,10 +259,14 @@ export async function runDemoPipeline(
     };
   }
 
-  console.log(`[pipeline] phase 3: concatenating ${segmentPaths.length} segments...`);
+  console.log(`[pipeline] phase 3: concatenating ${items.length} items with transitions...`);
   const music = script.music;
   const concatTarget = music ? join(recordingsDir, "combined.mp4") : outputPath;
-  concatSegments(segmentPaths, concatTarget, script.output);
+  concatWithTransitions(items, concatTarget, script.output);
+
+  // Blended transitions overlap segments, so the true length is only known
+  // after concat — probe it for accurate music fade-out timing and reporting.
+  const combinedMs = probeMediaDurationMs(concatTarget);
 
   let finalPath = concatTarget;
   if (music) {
@@ -224,7 +279,7 @@ export async function runDemoPipeline(
       videoPath: concatTarget,
       music,
       musicPath,
-      totalDurationMs,
+      totalDurationMs: combinedMs,
       outputPath,
     });
   }
@@ -233,7 +288,7 @@ export async function runDemoPipeline(
 
   return {
     outputPath: finalPath,
-    durationMs: totalDurationMs,
+    durationMs: combinedMs,
     clipCount: manifest.size,
     sceneCount: script.scenes.length,
     cardCount,
