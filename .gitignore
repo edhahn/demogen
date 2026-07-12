@@ -16,3 +16,5 @@ output/
 *.wav
 *.mp3
 *.hash
+
+.claude
