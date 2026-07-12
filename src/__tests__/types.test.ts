@@ -311,6 +311,56 @@ describe("demoScriptSchema", () => {
     expect(() => demoScriptSchema.parse(bad)).toThrow("nope");
   });
 
+  it("parses a card timed with wait_for_narration and wait_after", () => {
+    const script = {
+      ...validScript,
+      scenes: [
+        {
+          type: "card",
+          id: "title_card",
+          headline: "Hi",
+          wait_for_narration: "welcome",
+          wait_after: 1200,
+        },
+        ...validScript.scenes,
+      ],
+    };
+    const result = demoScriptSchema.parse(script);
+    const card = result.scenes[0];
+    if (card?.type === "card") {
+      expect(card.wait_for_narration).toBe("welcome");
+      expect(card.wait_after).toBe(1200);
+    }
+  });
+
+  it("rejects a card wait_for_narration referencing an unknown clip", () => {
+    const bad = {
+      ...validScript,
+      scenes: [
+        { type: "card", id: "title_card", headline: "Hi", wait_for_narration: "missing" },
+        ...validScript.scenes,
+      ],
+    };
+    expect(() => demoScriptSchema.parse(bad)).toThrow("missing");
+  });
+
+  it("rejects a card that sets both clip and wait_for_narration", () => {
+    const bad = {
+      ...validScript,
+      scenes: [
+        {
+          type: "card",
+          id: "title_card",
+          headline: "Hi",
+          clip: "welcome",
+          wait_for_narration: "welcome",
+        },
+        ...validScript.scenes,
+      ],
+    };
+    expect(() => demoScriptSchema.parse(bad)).toThrow("wait_for_narration");
+  });
+
   it("parses a background music block with defaults", () => {
     const script = { ...validScript, music: { path: "./bg.mp3" } };
     const result = demoScriptSchema.parse(script);

@@ -12,11 +12,13 @@ const NARRATION_TAIL_MS = 800;
 
 /**
  * How long a card holds on screen: at least its configured `duration_ms`, and
- * long enough to fit its voiceover (lead-in + clip + tail) when it has one.
+ * long enough to fit its voiceover (lead-in + clip + tail) when it has one. The
+ * tail is `wait_after` when set, otherwise the built-in {@link NARRATION_TAIL_MS}.
  */
 export function cardDurationMs(card: DemoCardScene, narrationDurationMs?: number): number {
   if (narrationDurationMs == null) return card.duration_ms;
-  return Math.max(card.duration_ms, narrationDurationMs + NARRATION_LEAD_MS + NARRATION_TAIL_MS);
+  const tail = card.wait_after ?? NARRATION_TAIL_MS;
+  return Math.max(card.duration_ms, narrationDurationMs + NARRATION_LEAD_MS + tail);
 }
 
 function escapeHtml(s: string): string {

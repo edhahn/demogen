@@ -342,8 +342,8 @@ scenes:
     kind: title            # title | ending | credits — styling/semantics hint
     headline: "Acme Dashboard"
     subtitle: "A 90-second tour"    # optional
-    clip: title_vo         # optional voiceover — a narration clip ID
-    duration_ms: 4000      # min hold time; a longer voiceover extends it
+    wait_for_narration: title_vo    # voiceover clip — hold until it finishes
+    wait_after: 800                 # trailing pause after the voiceover (ms)
     fade: true             # fade in/out to black (default true)
 
   - id: intro              # a normal browser scene
@@ -359,8 +359,16 @@ scenes:
       - "Built with demogen"
       - "github.com/edhahn/demogen"
     background: "#0b1220"  # optional CSS color or gradient
-    duration_ms: 5000
+    duration_ms: 5000      # fixed hold, no voiceover
 ```
+
+A card is timed one of two ways:
+
+- **Fixed** — set `duration_ms` for a hard hold time (default 4000).
+- **To its voiceover** — set `wait_for_narration` to a narration clip ID; the
+  card voices that clip and holds until it finishes, plus an optional
+  `wait_after` trailing pause. `duration_ms` still acts as a floor, so the card
+  shows for `max(duration_ms, narration + lead + wait_after)`.
 
 | Field | Required | Notes |
 |-------|----------|-------|
@@ -371,12 +379,15 @@ scenes:
 | `subtitle` | no | Secondary line under the headline. |
 | `lines` | no | List of smaller lines (credits). |
 | `background` | no | CSS color/gradient (default dark). |
-| `duration_ms` | no | Minimum on-screen time (default 4000). A `clip` voiceover extends it. |
-| `clip` | no | Narration clip ID for an optional voiceover. |
+| `duration_ms` | no | Floor for on-screen time (default 4000). Narration extends it. |
+| `clip` | no | Narration clip ID for a voiceover (legacy alias of `wait_for_narration`). |
+| `wait_for_narration` | no | Narration clip ID; voices the card and holds until it ends. Mutually exclusive with `clip`. |
+| `wait_after` | no | Trailing pause (ms) held after the narration finishes. |
 | `fade` | no | Fade in/out to black (default true). |
 
-A card's `clip` refers to an entry in `narration.clips`, exactly like a `narrate`
-step — define the spoken text there and reference it by ID.
+A card's `clip` / `wait_for_narration` refers to an entry in `narration.clips`,
+exactly like a `narrate` step — define the spoken text there and reference it by
+ID. Set only one of the two.
 
 ## Background music
 
