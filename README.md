@@ -280,6 +280,51 @@ The pipeline records narration audio first, then records the browser, then compo
   wait_for_narration: closing
 ```
 
+## Scene transitions
+
+By default scenes are joined with a hard **cut**. Any scene (browser or card)
+can instead declare a blended `transition`, which controls how it joins the
+segment *before* it. Transitions are rendered with ffmpeg's `xfade`/`acrossfade`
+filters at compose time.
+
+```yaml
+scenes:
+  - type: card
+    id: title
+    headline: "My App"
+    fade: false            # let the transition own this boundary, not the card's own fade
+
+  - id: dashboard
+    transition: crossfade  # dissolve from the title card into the app
+    steps: [ ... ]
+
+  - id: settings
+    transition: wipe             # wipe from the dashboard to settings
+    transition_duration: 800     # ms — optional; defaults per transition
+    steps: [ ... ]
+```
+
+Built-in transitions:
+
+| `transition` | Effect | Default duration |
+|--------------|--------|------------------|
+| `cut` / `none` | Hard cut, no blend (default; fast stream-copy concat) | — |
+| `crossfade` (alias `fade`) | Dissolve directly between scenes | 500 ms |
+| `fade_black` | Fade out to black, then in | 600 ms |
+| `fade_white` | Fade out to white, then in | 600 ms |
+| `wipe` | Wipe the incoming scene across the frame | 600 ms |
+
+`transition_duration` (ms) overrides the default; it's clamped so the blend fits
+inside the shorter adjacent segment. Transitions between two browser scenes work
+too — the continuous recording is split at the scene boundary and the pieces are
+blended, so the live browser session is never interrupted.
+
+**Extending:** transitions live in a small registry in
+[`src/transitions.ts`](src/transitions.ts). ffmpeg's `xfade` filter ships ~50
+named transitions (`slideleft`, `circleopen`, `dissolve`, `pixelize`, `radial`,
+…); exposing another one is a single entry — the YAML schema derives its allowed
+values from the registry automatically.
+
 ## Card scenes (title / ending / credits)
 
 A scene can be a **card** instead of a browser recording — a styled slate for a
