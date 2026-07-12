@@ -32,16 +32,17 @@ npx playwright install chromium
 
 ```bash
 # Record a public-page demo
-npx demogen ./scripts/smoke.demo.yaml
+npx demogen ./examples/smoke.demo.yaml
 
 # Watch the browser while recording
-npx demogen ./scripts/smoke.demo.yaml --headed
+npx demogen ./examples/smoke.demo.yaml --headed
 
 # Override the base URL
-npx demogen ./scripts/smoke.demo.yaml --base-url http://localhost:5173
+npx demogen ./examples/smoke.demo.yaml --base-url http://localhost:5173
 
-# Skip re-generating narration (uses cached .wav files)
-npx demogen ./scripts/smoke.demo.yaml --skip-narration
+# Skip re-generating narration (uses cached files). 
+# NOTE: Cached files are skipped by default regardless, unless a narration's script has changed.
+npx demogen ./examples/smoke.demo.yaml --skip-narration
 ```
 
 Output is written to `<outDir>/output/<demo-name>.mp4`. By default `<outDir>` is `./demos` next to the YAML file; override with `--out-dir`. See [Directory layout](#directory-layout) for how to point individual subdirectories elsewhere.
