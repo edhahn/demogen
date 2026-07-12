@@ -44,6 +44,24 @@ describe("cardDurationMs", () => {
   it("keeps the floor when narration is short", () => {
     expect(cardDurationMs(titleCard, 500)).toBe(4000);
   });
+
+  it("uses wait_after as the trailing pad when set", () => {
+    // 5000ms narration + 400ms lead + 2000ms wait_after = 7400ms, vs the
+    // default 800ms tail which would yield 6200ms.
+    const card = { ...titleCard, wait_after: 2000 };
+    expect(cardDurationMs(card, 5000)).toBe(7400);
+    expect(cardDurationMs(card, 5000)).toBeGreaterThan(cardDurationMs(titleCard, 5000));
+  });
+
+  it("falls back to the default tail when wait_after is unset", () => {
+    // 5000ms narration + 400ms lead + 800ms default tail = 6200ms.
+    expect(cardDurationMs(titleCard, 5000)).toBe(6200);
+  });
+
+  it("still honors the duration_ms floor with wait_after set", () => {
+    const card = { ...titleCard, wait_after: 100 };
+    expect(cardDurationMs(card, 500)).toBe(4000);
+  });
 });
 
 describe("groupScenes", () => {

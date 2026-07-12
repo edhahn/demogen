@@ -125,12 +125,25 @@ const cardSceneSchema = z.object({
   /** CSS color or gradient for the card background. */
   background: z.string().optional(),
   /**
-   * Minimum time the card holds on screen. The card actually shows for
-   * max(duration_ms, narration clip duration + tail padding).
+   * Floor for how long the card holds on screen (default 4000). When the card
+   * has narration (via `clip` or `wait_for_narration`), it actually shows for
+   * max(duration_ms, narration clip duration + lead + tail).
    */
   duration_ms: z.number().positive().default(4000),
   /** Optional narration clip id (from the shared narration pool) to voice over the card. */
   clip: z.string().optional(),
+  /**
+   * Narration clip id to voice over the card AND hold for. When set, the card
+   * stays up until the clip finishes (plus `wait_after`). This is the preferred
+   * way to time a card to its voiceover — mutually exclusive with `clip`, which
+   * names the same voiceover slot.
+   */
+  wait_for_narration: z.string().optional(),
+  /**
+   * Trailing pause (ms) held after the narration finishes. Only affects cards
+   * that have narration. Falls back to the built-in tail padding when omitted.
+   */
+  wait_after: z.number().nonnegative().optional(),
   /**
    * Fade the card in from / out to black within its own segment. Independent of
    * `transition` (which blends the card with adjacent segments at concat time).
@@ -228,6 +241,20 @@ export const demoScriptSchema = z
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: `Card scene "${scene.id}" references unknown narration clip "${scene.clip}"`,
+            path: ["scenes"],
+          });
+        }
+        if (scene.wait_for_narration && !clipIds.has(scene.wait_for_narration)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Card scene "${scene.id}" wait_for_narration references unknown clip "${scene.wait_for_narration}"`,
+            path: ["scenes"],
+          });
+        }
+        if (scene.clip && scene.wait_for_narration) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Card scene "${scene.id}" sets both "clip" and "wait_for_narration" — use one or the other`,
             path: ["scenes"],
           });
         }

@@ -222,7 +222,8 @@ export async function runDemoPipeline(
       }
     } else {
       const { card } = segment;
-      const narration = card.clip ? manifest.get(card.clip) : undefined;
+      const clipId = card.wait_for_narration ?? card.clip;
+      const narration = clipId ? manifest.get(clipId) : undefined;
       const durationMs = cardDurationMs(card, narration?.durationMs);
       totalDurationMs += durationMs;
       console.log(`[pipeline]   segment ${i}: card "${card.id}" (${card.kind}, ${durationMs}ms)`);
