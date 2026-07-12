@@ -7,9 +7,9 @@ import type { DemoScript, NarrationManifest } from "./types.js";
 
 function getTtsService(): TtsService {
   const raw = (process.env.DEMOGEN_TTS_SERVICE ?? process.env.DEMO_TTS_SERVICE ?? "say").toLowerCase();
-  if (raw !== "say" && raw !== "elevenlabs" && raw !== "openai") {
+  if (raw !== "say" && raw !== "elevenlabs" && raw !== "openai" && raw !== "kokoro") {
     throw new Error(
-      `Unknown DEMOGEN_TTS_SERVICE "${raw}". Supported: say, elevenlabs, openai.`,
+      `Unknown DEMOGEN_TTS_SERVICE "${raw}". Supported: say, elevenlabs, openai, kokoro.`,
     );
   }
   return raw;
@@ -19,7 +19,8 @@ function getTtsService(): TtsService {
  * Pre-generate TTS audio for all narration clips in a demo script.
  *
  * Service is selected via DEMOGEN_TTS_SERVICE: "say" (macOS, default),
- * "elevenlabs", or "openai". Friendly voice names (e.g. "Samantha") are
+ * "elevenlabs", "openai", or "kokoro" (local Kokoro-FastAPI server).
+ * Friendly voice names (e.g. "Samantha") are
  * resolved to service-specific voice IDs via voices.yml when present.
  * Caches by content hash — unchanged clips are not regenerated.
  */
@@ -60,6 +61,8 @@ export async function generateNarration(
       await generateClipElevenLabs(clip.text, resolvedVoice, audioPath);
     } else if (ttsService === "openai") {
       await generateClipOpenAI(clip.text, resolvedVoice, audioPath);
+    } else if (ttsService === "kokoro") {
+      await generateClipKokoro(clip.text, resolvedVoice, audioPath);
     } else {
       generateClipSay(clip.text, resolvedVoice, rate, audioPath);
     }
@@ -154,6 +157,51 @@ async function generateClipOpenAI(
   writeFileSync(outputPath, buffer);
 }
 
+async function generateClipKokoro(
+  text: string,
+  voice: string | undefined,
+  outputPath: string,
+): Promise<void> {
+  const baseUrl = (process.env.KOKORO_BASE_URL ?? "http://localhost:8880/v1").replace(/\/$/, "");
+  const resolvedVoice = voice ?? process.env.KOKORO_VOICE ?? "af_heart";
+  const model = process.env.KOKORO_MODEL ?? "kokoro";
+  const apiKey = process.env.KOKORO_API_KEY;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "audio/mpeg",
+  };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/audio/speech`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        input: text,
+        voice: resolvedVoice,
+        response_format: "mp3",
+      }),
+    });
+  } catch (cause) {
+    throw new Error(
+      `Kokoro server not reachable at ${baseUrl} — is Kokoro-FastAPI running? ` +
+        `Set KOKORO_BASE_URL to point at it.`,
+      { cause },
+    );
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "(unreadable)");
+    throw new Error(`Kokoro TTS API error ${response.status}: ${body}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  writeFileSync(outputPath, buffer);
+}
+
 function probeAudioDuration(audioPath: string): number {
   const result = execFileSync(
     "ffprobe",
@@ -181,6 +229,17 @@ export function checkNarratorPrerequisites(): void {
         "OPENAI_API_KEY is not set (required when DEMOGEN_TTS_SERVICE=openai)",
       );
     }
+  } else if (service === "kokoro") {
+    const baseUrl = process.env.KOKORO_BASE_URL;
+    if (baseUrl) {
+      try {
+        new URL(baseUrl);
+      } catch {
+        throw new Error(`KOKORO_BASE_URL is not a valid URL: "${baseUrl}"`);
+      }
+    }
+    // No secret required — Kokoro-FastAPI runs locally. Connection errors
+    // surface with a clear message from generateClipKokoro at generation time.
   } else {
     try {
       execFileSync("which", ["say"], { stdio: "pipe" });

@@ -10,16 +10,38 @@ output:
     height: 720
   quality: high
 
+# Optional background music, mixed at low volume under the whole video.
+# `path` is resolved relative to this script's directory. Generate a quick
+# test track with:
+#   ffmpeg -f lavfi -i "sine=frequency=220:duration=30" -y assets/bg.mp3
+music:
+  path: ./assets/bg.mp3
+  volume: 0.12
+  fade_in_ms: 800
+  fade_out_ms: 2000
+
 narration:
   voice: Samantha
   rate: 175
   clips:
+    - id: title_vo
+      text: "Welcome — here's a quick look at our example demo."
     - id: welcome
       text: "Welcome to our example demo."
     - id: closing
       text: "That concludes the smoke test."
 
 scenes:
+  # Card scenes are rendered from styled HTML — no browser. Place them
+  # anywhere in `scenes`; a `clip` gives the card an optional voiceover.
+  - type: card
+    id: title
+    kind: title
+    headline: "Example Demo"
+    subtitle: "A 30-second smoke test"
+    clip: title_vo
+    duration_ms: 4000
+
   - id: intro
     steps:
       - action: narrate
@@ -43,3 +65,12 @@ scenes:
         condition: timeout
         timeout: 2000
         wait_for_narration: closing
+
+  - type: card
+    id: credits
+    kind: credits
+    headline: "Thanks for watching"
+    lines:
+      - "Built with demogen"
+      - "https://github.com/edhahn/demogen"
+    duration_ms: 5000

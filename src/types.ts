@@ -83,12 +83,60 @@ const demoStepSchema = z.discriminatedUnion("action", [
   waitStepSchema,
 ]);
 
-const demoSceneSchema = z.object({
+const browserSceneSchema = z.object({
+  /**
+   * Scene kind discriminant. Optional and defaults to "browser" so scripts
+   * written before card scenes existed continue to parse unchanged.
+   */
+  type: z.literal("browser").optional(),
   id: z.string().regex(/^[a-z][a-z0-9_]*$/, "Scene IDs must be snake_case"),
   title: z.string().optional(),
   transition: z.enum(["fade", "cut", "none"]).default("cut"),
   transition_duration: z.number().nonnegative().default(500),
   steps: z.array(demoStepSchema).min(1),
+});
+
+/**
+ * A non-browser "slate" scene rendered from styled HTML (title/ending/credits).
+ * Can appear anywhere in the `scenes` list; contiguous browser scenes on either
+ * side are recorded separately and concatenated around the card.
+ */
+const cardSceneSchema = z.object({
+  type: z.literal("card"),
+  id: z.string().regex(/^[a-z][a-z0-9_]*$/, "Scene IDs must be snake_case"),
+  /** Drives default styling/semantics only — any card may set any field. */
+  kind: z.enum(["title", "ending", "credits"]).default("title"),
+  headline: z.string().min(1),
+  subtitle: z.string().optional(),
+  /** Stacked lines, intended for credits but allowed on any card. */
+  lines: z.array(z.string()).optional(),
+  /** CSS color or gradient for the card background. */
+  background: z.string().optional(),
+  /**
+   * Minimum time the card holds on screen. The card actually shows for
+   * max(duration_ms, narration clip duration + tail padding).
+   */
+  duration_ms: z.number().positive().default(4000),
+  /** Optional narration clip id (from the shared narration pool) to voice over the card. */
+  clip: z.string().optional(),
+  /** Fade the card in from / out to black. */
+  fade: z.boolean().default(true),
+});
+
+/**
+ * A scene is either a browser recording (default) or a rendered card. Card is
+ * listed first so its `type: "card"` discriminant is matched before the browser
+ * variant, which accepts a missing/`"browser"` type.
+ */
+const demoSceneSchema = z.union([cardSceneSchema, browserSceneSchema]);
+
+const musicConfigSchema = z.object({
+  /** Audio file, resolved relative to the demo script's directory. */
+  path: z.string().min(1),
+  /** Mix gain 0..1 applied to the music bed (default 0.15). */
+  volume: z.number().gt(0).max(1).default(0.15),
+  fade_in_ms: z.number().nonnegative().optional(),
+  fade_out_ms: z.number().nonnegative().optional(),
 });
 
 const outputSettingsSchema = z.object({
@@ -146,12 +194,25 @@ export const demoScriptSchema = z
     output: outputSettingsSchema.default({}),
     cursor: cursorConfigSchema,
     narration: narrationConfigSchema,
+    /** Optional background music mixed under the entire video. */
+    music: musicConfigSchema.optional(),
     scenes: z.array(demoSceneSchema).min(1),
   })
   .superRefine((script, ctx) => {
     const clipIds = new Set(script.narration.clips.map((c) => c.id));
 
     for (const scene of script.scenes) {
+      if (scene.type === "card") {
+        if (scene.clip && !clipIds.has(scene.clip)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Card scene "${scene.id}" references unknown narration clip "${scene.clip}"`,
+            path: ["scenes"],
+          });
+        }
+        continue;
+      }
+
       for (const step of scene.steps) {
         if (step.action === "narrate" && !clipIds.has(step.clip)) {
           ctx.addIssue({
@@ -193,6 +254,9 @@ export const demoScriptSchema = z
 
 export type DemoScript = z.infer<typeof demoScriptSchema>;
 export type DemoScene = z.infer<typeof demoSceneSchema>;
+export type BrowserScene = z.infer<typeof browserSceneSchema>;
+export type DemoCardScene = z.infer<typeof cardSceneSchema>;
+export type MusicConfig = z.infer<typeof musicConfigSchema>;
 export type DemoStep = z.infer<typeof demoStepSchema>;
 export type NarrationClip = z.infer<typeof narrationClipSchema>;
 export type OutputSettings = z.infer<typeof outputSettingsSchema>;
@@ -235,6 +299,7 @@ export interface PipelineResult {
   durationMs: number;
   clipCount: number;
   sceneCount: number;
+  cardCount: number;
 }
 
 /**

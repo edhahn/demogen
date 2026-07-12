@@ -7,6 +7,7 @@ import {
   primeCursorPosition,
 } from "./cursor.js";
 import type {
+  BrowserScene,
   DemoScript,
   DemoStep,
   NarrationManifest,
@@ -32,9 +33,14 @@ export interface RecordOptions {
  *
  * Narrate steps don't play audio — they record the video-relative offset
  * so the composer can place audio at the correct position later.
+ *
+ * Records a single contiguous run of browser scenes into one .webm. Card
+ * scenes are rendered separately (see cards.ts) and concatenated around the
+ * browser segments by the runner, so `scenes` here is always browser-only.
  */
 export async function recordDemo(
   script: DemoScript,
+  scenes: BrowserScene[],
   manifest: NarrationManifest,
   outDir: string,
   opts: RecordOptions,
@@ -104,7 +110,7 @@ export async function recordDemo(
       showClickRipple: cursor.showClickRipple,
     };
 
-    for (const scene of script.scenes) {
+    for (const scene of scenes) {
       console.log(`  [recorder] scene: ${scene.id}`);
 
       for (const step of scene.steps) {

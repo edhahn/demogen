@@ -1,7 +1,10 @@
 export {
   composeDemoVideo,
+  concatSegments,
+  mixBackgroundMusic,
   checkComposerPrerequisites,
 } from "./composer.js";
+export { buildCardHtml, cardDurationMs, composeCardSegment, renderCardImage } from "./cards.js";
 export {
   generateNarration,
   checkNarratorPrerequisites,
@@ -21,12 +24,15 @@ export {
   parseDemoScript,
 } from "./types.js";
 export type {
+  BrowserScene,
   ComposeOptions,
   CursorConfig,
+  DemoCardScene,
   DemoMeta,
   DemoScene,
   DemoScript,
   DemoStep,
+  MusicConfig,
   NarrationClip,
   NarrationManifest,
   NarrationManifestEntry,

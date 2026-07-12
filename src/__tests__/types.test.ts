@@ -240,4 +240,101 @@ describe("demoScriptSchema", () => {
     const result = demoScriptSchema.parse(script);
     expect(result.base_url).toBe("https://example.com");
   });
+
+  it("still parses a legacy browser scene with no type field", () => {
+    const result = demoScriptSchema.parse(validScript);
+    const scene = result.scenes[0];
+    expect(scene?.type).toBeUndefined();
+    if (scene && scene.type !== "card") {
+      expect(scene.steps).toHaveLength(4);
+    }
+  });
+
+  it("parses a card scene and applies defaults", () => {
+    const script = {
+      ...validScript,
+      scenes: [
+        { type: "card", id: "title_card", headline: "Acme Dashboard" },
+        ...validScript.scenes,
+      ],
+    };
+    const result = demoScriptSchema.parse(script);
+    const card = result.scenes[0];
+    expect(card?.type).toBe("card");
+    if (card?.type === "card") {
+      expect(card.kind).toBe("title");
+      expect(card.duration_ms).toBe(4000);
+      expect(card.fade).toBe(true);
+    }
+  });
+
+  it("parses a credits card with lines and a voiceover clip", () => {
+    const script = {
+      ...validScript,
+      scenes: [
+        ...validScript.scenes,
+        {
+          type: "card",
+          id: "credits",
+          kind: "credits",
+          headline: "Credits",
+          lines: ["Built with demogen", "Narration: ElevenLabs"],
+          clip: "welcome",
+          duration_ms: 6000,
+        },
+      ],
+    };
+    const result = demoScriptSchema.parse(script);
+    const card = result.scenes[1];
+    if (card?.type === "card") {
+      expect(card.lines).toHaveLength(2);
+      expect(card.clip).toBe("welcome");
+    }
+  });
+
+  it("rejects a card scene without a headline", () => {
+    const bad = {
+      ...validScript,
+      scenes: [{ type: "card", id: "title_card" }, ...validScript.scenes],
+    };
+    expect(() => demoScriptSchema.parse(bad)).toThrow();
+  });
+
+  it("rejects a card clip referencing an unknown narration clip", () => {
+    const bad = {
+      ...validScript,
+      scenes: [
+        { type: "card", id: "title_card", headline: "Hi", clip: "nope" },
+        ...validScript.scenes,
+      ],
+    };
+    expect(() => demoScriptSchema.parse(bad)).toThrow("nope");
+  });
+
+  it("parses a background music block with defaults", () => {
+    const script = { ...validScript, music: { path: "./bg.mp3" } };
+    const result = demoScriptSchema.parse(script);
+    expect(result.music?.path).toBe("./bg.mp3");
+    expect(result.music?.volume).toBe(0.15);
+  });
+
+  it("accepts music volume/fade overrides", () => {
+    const script = {
+      ...validScript,
+      music: { path: "./bg.mp3", volume: 0.3, fade_in_ms: 500, fade_out_ms: 1500 },
+    };
+    const result = demoScriptSchema.parse(script);
+    expect(result.music?.volume).toBe(0.3);
+    expect(result.music?.fade_out_ms).toBe(1500);
+  });
+
+  it("rejects music volume above 1", () => {
+    const bad = { ...validScript, music: { path: "./bg.mp3", volume: 2 } };
+    expect(() => demoScriptSchema.parse(bad)).toThrow();
+  });
+
+  it("rejects music volume of 0", () => {
+    const bad = { ...validScript, music: { path: "./bg.mp3", volume: 0 } };
+    expect(() => demoScriptSchema.parse(bad)).toThrow();
+  });
 });

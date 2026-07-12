@@ -3,7 +3,7 @@ import { join } from "node:path";
 import yaml from "js-yaml";
 import { z } from "zod";
 
-export type TtsService = "say" | "elevenlabs" | "openai";
+export type TtsService = "say" | "elevenlabs" | "openai" | "kokoro";
 
 const voiceMapSchema = z
   .object({
@@ -16,6 +16,7 @@ const voiceMapSchema = z
     say: z.record(z.string()).optional(),
     elevenlabs: z.record(z.string()).optional(),
     openai: z.record(z.string()).optional(),
+    kokoro: z.record(z.string()).optional(),
   })
   .partial();
 

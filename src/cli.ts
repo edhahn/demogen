@@ -40,12 +40,16 @@ Environment:
   DEMOGEN_INTERSTITIAL_DIR  override interstitial dir
   DEMOGEN_OUTPUT_DIR        override final output dir
   DEMOGEN_VOICES            path to voices.yml
-  DEMOGEN_TTS_SERVICE       "say" (default, macOS) | "elevenlabs" | "openai"
+  DEMOGEN_TTS_SERVICE       "say" (default, macOS) | "elevenlabs" | "openai" | "kokoro"
   ELEVENLABS_API_KEY        required when DEMOGEN_TTS_SERVICE=elevenlabs
   ELEVENLABS_VOICE_ID       fallback voice when no voices.yml mapping exists
   OPENAI_API_KEY            required when DEMOGEN_TTS_SERVICE=openai
   OPENAI_VOICE              fallback voice (default: nova) — alloy|echo|fable|onyx|nova|shimmer
   OPENAI_TTS_MODEL          OpenAI model (default: tts-1; use tts-1-hd for higher quality)
+  KOKORO_BASE_URL           Kokoro-FastAPI base URL (default: http://localhost:8880/v1)
+  KOKORO_VOICE              fallback voice (default: af_heart)
+  KOKORO_MODEL              Kokoro model name (default: kokoro)
+  KOKORO_API_KEY            optional bearer token when the Kokoro endpoint is gated
 `);
   process.exit(args.length === 0 ? 1 : 0);
 }
@@ -106,7 +110,7 @@ async function main() {
   console.log("\n=== Demo Recording Complete ===");
   console.log(`  Output: ${result.outputPath}`);
   console.log(`  Duration: ${(result.durationMs / 1000).toFixed(1)}s`);
-  console.log(`  Scenes: ${result.sceneCount}`);
+  console.log(`  Scenes: ${result.sceneCount} (${result.cardCount} cards)`);
   console.log(`  Narration clips: ${result.clipCount}`);
   if (openAfter) {
     const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";

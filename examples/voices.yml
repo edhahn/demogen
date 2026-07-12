@@ -25,6 +25,13 @@ openai:
   Daniel: onyx
   Rachel: shimmer
 
+kokoro:
+  # Friendly name : Kokoro voice ID (e.g. af_heart, af_bella, am_michael) —
+  # served by your local Kokoro-FastAPI instance.
+  Samantha: af_heart
+  Daniel: am_michael
+  Rachel: af_bella
+
 say:
   # Optional. macOS `say` already uses these names natively, so entries
   # here are only needed if you want to remap (e.g. point "Samantha" at

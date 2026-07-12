@@ -3,8 +3,9 @@
 Automated product demo recordings driven by a YAML script. Each demo is a Playwright browser session with synchronized narration audio, composed into a final MP4.
 
 ```
-YAML script  ─►  TTS narration  ─►  Playwright recording  ─►  ffmpeg compose  ─►  demo.mp4
-                 (cached by hash)    (narration-aware timing)   (adelay + amix)
+YAML script  ─►  TTS narration  ─►  build segments        ─►  concat + music  ─►  demo.mp4
+                 (cached by hash)    (browser recordings +      (stream-copy +
+                                      rendered card slates)      music bed)
 ```
 
 ## Install
@@ -83,16 +84,20 @@ To load a different file: `demogen ./script.yaml --env ./envs/prod.env`. An expl
 | `DEMOGEN_INTERSTITIAL_DIR` | `<out>/interstitial` | Override interstitial dir. |
 | `DEMOGEN_OUTPUT_DIR` | `<out>/output` | Override final output dir. |
 | `DEMOGEN_VOICES` | `./voices.yml` | Path to the voices map file. |
-| `DEMOGEN_TTS_SERVICE` | `say` | `say` (macOS), `elevenlabs`, or `openai`. |
+| `DEMOGEN_TTS_SERVICE` | `say` | `say` (macOS), `elevenlabs`, `openai`, or `kokoro`. |
 | `ELEVENLABS_API_KEY` | — | Required when `DEMOGEN_TTS_SERVICE=elevenlabs`. |
 | `ELEVENLABS_VOICE_ID` | — | Fallback voice when no `voices.yml` mapping exists. |
 | `OPENAI_API_KEY` | — | Required when `DEMOGEN_TTS_SERVICE=openai`. |
 | `OPENAI_VOICE` | `nova` | Fallback voice (`alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer`). |
 | `OPENAI_TTS_MODEL` | `tts-1` | OpenAI TTS model — use `tts-1-hd` for higher fidelity. |
+| `KOKORO_BASE_URL` | `http://localhost:8880/v1` | Kokoro-FastAPI base URL (used when `DEMOGEN_TTS_SERVICE=kokoro`). |
+| `KOKORO_VOICE` | `af_heart` | Fallback voice when no `voices.yml` mapping exists. |
+| `KOKORO_MODEL` | `kokoro` | Model name sent to the Kokoro server. |
+| `KOKORO_API_KEY` | — | Optional bearer token, if your Kokoro endpoint is gated. |
 
 ## TTS configuration
 
-demogen supports three TTS providers. Pick one by setting `DEMOGEN_TTS_SERVICE`:
+demogen supports four TTS providers. Pick one by setting `DEMOGEN_TTS_SERVICE`:
 
 ### `say` (macOS, default)
 
@@ -119,6 +124,27 @@ OPENAI_API_KEY=sk-...
 # Optional
 OPENAI_VOICE=nova           # alloy | echo | fable | onyx | nova | shimmer
 OPENAI_TTS_MODEL=tts-1-hd   # default: tts-1
+```
+
+### `kokoro` (local, self-hosted)
+
+Run [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) locally — it serves
+an OpenAI-compatible speech endpoint, so narration is generated on your machine with
+no API key or per-call cost. For example:
+
+```sh
+docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest   # or the -gpu image
+```
+
+Then add to `.env.demogen` in the directory you run `demogen` from:
+
+```dotenv
+DEMOGEN_TTS_SERVICE=kokoro
+# Optional — defaults shown
+KOKORO_BASE_URL=http://localhost:8880/v1
+KOKORO_VOICE=af_heart       # e.g. af_heart, af_bella, am_michael
+KOKORO_MODEL=kokoro
+# KOKORO_API_KEY=...        # only if your endpoint is gated
 ```
 
 ### `voices.yml` — friendly voice names
@@ -198,7 +224,7 @@ output:
 
 narration:
   voice: Samantha           # friendly name; resolved via voices.yml per active TTS service
-  rate: 175                 # words per minute (used by `say`; ignored by elevenlabs/openai)                 # words per minute
+  rate: 175                 # words per minute (used by `say`; ignored by elevenlabs/openai)
   clips:
     - id: welcome           # snake_case ID referenced by steps
       text: "Welcome to the dashboard."
@@ -254,6 +280,78 @@ The pipeline records narration audio first, then records the browser, then compo
   wait_for_narration: closing
 ```
 
+## Card scenes (title / ending / credits)
+
+A scene can be a **card** instead of a browser recording — a styled slate for a
+title, closing, or credits screen. Cards are rendered from HTML in the same
+headless Chromium, screenshotted, and turned into a video segment. Add one as an
+entry in the `scenes` list with `type: card`; place it anywhere. Contiguous
+browser scenes on either side are recorded separately and concatenated around
+the card.
+
+```yaml
+scenes:
+  - type: card
+    id: title              # snake_case scene ID
+    kind: title            # title | ending | credits — styling/semantics hint
+    headline: "Acme Dashboard"
+    subtitle: "A 90-second tour"    # optional
+    clip: title_vo         # optional voiceover — a narration clip ID
+    duration_ms: 4000      # min hold time; a longer voiceover extends it
+    fade: true             # fade in/out to black (default true)
+
+  - id: intro              # a normal browser scene
+    steps:
+      - action: goto
+        value: /home
+
+  - type: card
+    id: credits
+    kind: credits
+    headline: "Thanks for watching"
+    lines:                 # stacked lines, handy for credits
+      - "Built with demogen"
+      - "github.com/edhahn/demogen"
+    background: "#0b1220"  # optional CSS color or gradient
+    duration_ms: 5000
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `type` | yes | Must be `card`. |
+| `id` | yes | snake_case scene ID. |
+| `headline` | yes | Main line. |
+| `kind` | no | `title` \| `ending` \| `credits` (default `title`) — styling hint only. |
+| `subtitle` | no | Secondary line under the headline. |
+| `lines` | no | List of smaller lines (credits). |
+| `background` | no | CSS color/gradient (default dark). |
+| `duration_ms` | no | Minimum on-screen time (default 4000). A `clip` voiceover extends it. |
+| `clip` | no | Narration clip ID for an optional voiceover. |
+| `fade` | no | Fade in/out to black (default true). |
+
+A card's `clip` refers to an entry in `narration.clips`, exactly like a `narrate`
+step — define the spoken text there and reference it by ID.
+
+## Background music
+
+Add an optional `music` block to lay a looping music bed under the entire video
+(narration and cards included). The track is looped to cover the timeline,
+volume-scaled, optionally faded, and trimmed to length.
+
+```yaml
+music:
+  path: ./assets/bg.mp3   # resolved relative to the demo script's directory
+  volume: 0.15            # 0..1 mix gain (default 0.15)
+  fade_in_ms: 1000        # optional
+  fade_out_ms: 2000       # optional
+```
+
+No royalty-free track handy? Generate a quick test tone:
+
+```bash
+ffmpeg -f lavfi -i "sine=frequency=220:duration=30" -y assets/bg.mp3
+```
+
 ## Programmatic API
 
 ```ts
@@ -307,11 +405,20 @@ const setupAuth = async ({ role, baseURL, headless }) => {
 ```
 1. Parse & validate YAML  (zod schema)
 2. Generate narration audio (cached by content hash)
-3. Record browser with narration-aware timing → .webm
-4. Compose: ffmpeg mixes audio into video → .mp4
+3. Build segments: record each browser run → .webm → .mp4, render each card → .mp4
+4. Concatenate segments in order, then mix in optional background music → .mp4
 ```
 
+Because a card scene can sit between browser scenes, demogen records each
+contiguous run of browser scenes as its own segment and concatenates them with
+the rendered card segments — rather than producing one continuous recording.
+
 See [Directory layout](#directory-layout) for where each pipeline stage writes its output.
+
+> **Note:** `recordDemo` now takes the list of browser scenes to record as its
+> second argument — `recordDemo(script, scenes, manifest, outDir, opts)` — since
+> the runner calls it once per browser segment. Most users go through
+> `runDemoPipeline` and are unaffected.
 
 ## Cursor overlay
 
