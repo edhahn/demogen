@@ -10,10 +10,19 @@ YAML script  ─►  TTS narration  ─►  build segments        ─►  concat
 
 ## Install
 
+`demogen` is published to **GitHub Packages** as `@edhahn/demogen`. To install it, point the `@edhahn` scope at the GitHub registry and authenticate with a GitHub token that has the `read:packages` scope. Add an `.npmrc` to the consuming project:
+
+```
+@edhahn:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+```
+
+Then, with `NODE_AUTH_TOKEN` set to your token:
+
 ```bash
-npm install demogen
+npm install @edhahn/demogen
 # or
-pnpm add demogen
+pnpm add @edhahn/demogen
 ```
 
 `demogen` ships with `@playwright/test` as a runtime dependency. After install, pull the Chromium binary:
@@ -487,6 +496,29 @@ cursor:
   travelMs: 500          # how long cursor moves take
   steps: 15              # smoothness of cursor path
   showClickRipple: true  # ripple animation on click
+```
+
+## Publishing / Releasing
+
+`@edhahn/demogen` is published to **GitHub Packages** by the [`publish`](.github/workflows/publish.yml) workflow, which runs whenever a `v*` tag is pushed. The workflow builds `dist/` and runs `npm publish` using the repo's built-in `GITHUB_TOKEN` — no secrets to configure.
+
+To cut a release:
+
+```bash
+# Bump the version and create the matching commit + tag
+npm version patch            # or: minor | major | 0.2.0
+
+# Push the commit and the tag
+git push --follow-tags
+```
+
+The workflow then publishes the version from `package.json` (e.g. `@edhahn/demogen@0.1.1`). Confirm the run under **Actions** and the package under the repo's **Packages** tab.
+
+To verify the tarball before publishing, run a local dry run:
+
+```bash
+npm run build
+npm publish --dry-run        # lists the files that would ship (dist/, README.md, LICENSE)
 ```
 
 ## License
