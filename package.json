@@ -1,6 +1,6 @@
 {
   "name": "@edhahn/demogen",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Automated product demo recordings driven by a YAML script. Playwright + TTS narration + ffmpeg composition.",
   "license": "MIT",
   "author": "Edward Hahn",
